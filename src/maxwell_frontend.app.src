@@ -1,0 +1,20 @@
+{application, maxwell_frontend,
+  [{description, "Frontend of maxwell project."},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {maxwell_frontend_app, []}},
+    {applications, [
+      kernel,
+      stdlib,
+      lager,
+      maxwell_protocol,
+      maxwell_client,
+      maxwell_server
+    ]},
+    {env, []},
+    {modules, []},
+    {maintainers, []},
+    {licenses, ["Apache 2.0"]},
+    {links, []}
+
+  ]}.
