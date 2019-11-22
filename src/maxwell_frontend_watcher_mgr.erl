@@ -69,8 +69,7 @@ next(Type) ->
     WatcherPid -> WatcherPid
   end.
 
-stop(Type) ->
-  gen_server:cast(?VIA_PROCESS_NAME(Type), stop).
+stop(Type) -> gen_server:stop(?VIA_PROCESS_NAME(Type)).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -91,8 +90,6 @@ handle_call(next, _From, State) ->
 handle_call(_Request, _From, State) ->
   reply({ok, State}).
 
-handle_cast(stop, State) ->
-  {stop, normal, State};
 handle_cast(_Request, State) ->
   noreply(State).
 
@@ -189,7 +186,7 @@ iter(State) -> %% return an iterator from current's next key
 
 should_clean(State) ->
   case gb_trees:size(State#state.watchers) =< 0 of
-    true -> stop(self());
+    true -> erlang:exit({shutdown, cleaned});
     false -> ignore
   end,
   State.

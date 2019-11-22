@@ -9,7 +9,8 @@
       lager,
       maxwell_protocol,
       maxwell_client,
-      maxwell_server
+      maxwell_server,
+      maxwell_ip_resolver
     ]},
     {env, []},
     {modules, []},

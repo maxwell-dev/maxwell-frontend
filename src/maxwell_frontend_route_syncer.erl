@@ -10,6 +10,7 @@
 -behaviour(gen_server).
 
 -include_lib("maxwell_protocol/include/maxwell_protocol_pb.hrl").
+-include_lib("maxwell_client/include/maxwell_client.hrl").
 
 %% API
 -export([
@@ -27,12 +28,10 @@
 ]).
 
 -define(SERVER, ?MODULE).
--define(ON_CONNECTED_CMD(Ref, Pid), {'$on_connected', Ref, Pid}).
--define(ON_DISCONNECTED_CMD(Ref, Pid), {'$on_disconnected', Ref, Pid}).
 -define(PUSH_CMD, '$push').
 -define(PULL_CMD, '$pull').
 
--record(state, {connected = false}).
+-record(state, {connector_ref, connected = false}).
 
 %%%===================================================================
 %%% API
@@ -46,9 +45,10 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
-  State = #state{},
-  lager:info("Initializing ~p: state: ~p", [?MODULE, State]),
+  Ref = erlang:monitor(process, maxwell_frontend_master_connector:get_pid()),
+  State = #state{connector_ref = Ref},
   maxwell_frontend_master_connector:add_listener(self()),
+  lager:info("Initializing ~p: state: ~p", [?MODULE, State]),
   send_cmd(?PUSH_CMD, 5000),
   send_cmd(?PULL_CMD, 10000),
   {ok, State}.
@@ -59,16 +59,19 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Request, State) ->
   {noreply, State}.
 
-handle_info(?ON_CONNECTED_CMD(_, Pid), State) ->
+handle_info(?ON_CONNECTED_CMD(Pid), State) ->
   lager:debug("ON_CONNECTED_CMD: pid: ~p", [Pid]),
   {noreply, on_connected(State)};
-handle_info(?ON_DISCONNECTED_CMD(_, Pid), State) ->
+handle_info(?ON_DISCONNECTED_CMD(Pid), State) ->
   lager:debug("ON_DISCONNECTED_CMD: pid: ~p", [Pid]),
   {noreply, on_disconnected(State)};
 handle_info(?PUSH_CMD, State) ->
   {noreply, push(State)};
 handle_info(?PULL_CMD, State) ->
   {noreply, pull(State)};
+handle_info({'DOWN', Ref, process, _Pid, _Reason}, State) 
+    when Ref =:= State#state.connector_ref ->
+  {stop, {shutdown, connector_was_down}, State};
 handle_info(_Info, State) ->
   {noreply, State}.
 
