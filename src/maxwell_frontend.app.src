@@ -10,7 +10,8 @@
       maxwell_protocol,
       maxwell_client,
       maxwell_server,
-      maxwell_ip_resolver
+      maxwell_ip_resolver,
+      maxwell_backend_resolver
     ]},
     {env, []},
     {modules, []},

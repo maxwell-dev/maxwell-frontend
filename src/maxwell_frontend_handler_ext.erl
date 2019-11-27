@@ -21,8 +21,8 @@
   node_id,
   handler_pid,
   handler_id,
-  topic_conns,
-  conn_topics
+  endpoint_conns,
+  conn_endpoints
 }).
 
 %%%===================================================================
@@ -43,8 +43,9 @@ handle(#unwatch_req_t{type = Type, ref = Ref}, State) ->
   reply(#unwatch_rep_t{ref = Ref}, State);
 
 handle(#pull_req_t{topic = Topic, ref = Ref} = Req, State) ->
-  case connect_to_backend(Topic, State) of
-    {ok, ConnPid, State2} ->
+  case maxwell_backend_resolver:resolve(Topic) of
+    {ok, Endpoint} ->
+      {ok, ConnPid, State2} = fetch_conn(Endpoint, State),
       send_to_backend(ConnPid, set_puller(Req, State2)),
       noreply(State2);
     Error ->
@@ -82,7 +83,7 @@ handle(#do_rep_t{} = Rep, State) ->
   noreply(State);
 
 handle({'DOWN', ConnRef, process, _ConnPid, _Reason}, State) ->
-  noreply(unregister_backend(ConnRef, State));
+  noreply(release_conn(ConnRef, State));
 
 handle(Msg, State) ->
   lager:error("Received unknown msg: ~p", [Msg]),
@@ -103,8 +104,8 @@ init_state(Req) ->
     node_id = get_node_id(),
     handler_pid = HandlerPid,
     handler_id = maxwell_frontend_handler_id_mgr:assign_id(HandlerPid),
-    topic_conns = dict:new(),
-    conn_topics = dict:new()
+    endpoint_conns = dict:new(),
+    conn_endpoints = dict:new()
   }.
 
 get_node_id() ->
@@ -123,42 +124,30 @@ get_node_id() ->
     Port:16/little-unsigned-integer-unit:1
   >>.
 
-connect_to_backend(Topic, State) ->
-  case dict:find(Topic, State#state.topic_conns) of
-    {ok, {_, ConnPid}} -> {ok, ConnPid, State}; 
+fetch_conn(Endpoint, State) ->
+  case dict:find(Endpoint, State#state.endpoint_conns) of
+    {ok, {_, ConnPid}} -> {ok, ConnPid, State};
     error ->
-      case resolve_backend(Topic) of
-        {ok, Endpoint} -> 
-          {ok, ConnPid} = maxwell_client_conn_pool:fetch(Endpoint),
-          ConnRef = erlang:monitor(process, ConnPid),
-          State2 = register_backend(Topic, {ConnRef, ConnPid}, State),
-          {ok, ConnPid, State2};
-        Error -> Error
-      end
+      {ok, ConnPid} = maxwell_client_conn_pool:fetch(Endpoint),
+      ConnRef = erlang:monitor(process, ConnPid),
+      {ok, ConnPid, register_endpoint(Endpoint, {ConnRef, ConnPid}, State)}
   end.
 
-resolve_backend(Topic) ->
-  Req = #resolve_backend_req_t{topic = Topic},
-  case maxwell_frontend_master_connector:send(Req, 5000) of
-    #resolve_backend_rep_t{endpoint = Endpoint} -> 
-      {ok, Endpoint};
-    #error_rep_t{code = Code, desc = Desc} -> 
-      {error, {failed_to_resolve_backend, {Code, Desc}}};
-    {error, {_, _}, _} = Error -> 
-      {error, {failed_to_resolve_backend, Error}}
-  end.
+release_conn(ConnRef, State) ->
+  erlang:demonitor(ConnRef),
+  unregister_endpoint(ConnRef, State).
 
-register_backend(Topic, {ConnRef, _} = Conn, State) -> 
-  TopicConns = dict:store(Topic, Conn, State#state.topic_conns),
-  ConnTopics = dict:store(ConnRef, Topic, State#state.conn_topics),
-  State#state{topic_conns = TopicConns, conn_topics = ConnTopics}.
+register_endpoint(Endpoint, {ConnRef, _} = Conn, State) -> 
+  EndpointConns = dict:store(Endpoint, Conn, State#state.endpoint_conns),
+  ConnEndpoints = dict:store(ConnRef, Endpoint, State#state.conn_endpoints),
+  State#state{endpoint_conns = EndpointConns, conn_endpoints = ConnEndpoints}.
 
-unregister_backend(ConnRef, State) -> 
-  case dict:find(ConnRef, State#state.conn_topics) of
-    {ok, Topic} ->
-      TopicConns = dict:erase(Topic, State#state.topic_conns),
-      ConnTopics = dict:erase(ConnRef, State#state.conn_topics),
-      State#state{topic_conns = TopicConns, conn_topics = ConnTopics};
+unregister_endpoint(ConnRef, State) -> 
+  case dict:find(ConnRef, State#state.conn_endpoints) of
+    {ok, Endpoint} ->
+      EndpointConns = dict:erase(Endpoint, State#state.endpoint_conns),
+      ConnEndpoints = dict:erase(ConnRef, State#state.conn_endpoints),
+      State#state{endpoint_conns = EndpointConns, conn_endpoints = ConnEndpoints};
     error -> State
   end.
 
@@ -179,9 +168,9 @@ try_send_to_route(Type, Req, State) ->
   Endpoint = maxwell_frontend_route_mgr:next(Type),
   case Endpoint =/= undefined of
     true ->
-      {ok, ConnPid} = maxwell_client_conn_pool:fetch(Endpoint),
-      send_to_route(ConnPid, add_trace(Req, State)),
-      noreply(State);
+      {ok, ConnPid, State2} = fetch_conn(Endpoint, State),
+      send_to_route(ConnPid, add_trace(Req, State2)),
+      noreply(State2);
     false ->
       lager:error("Failed to find available watcher or route: type: ~p", [Type]),
       Error = build_error_rep(

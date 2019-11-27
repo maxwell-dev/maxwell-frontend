@@ -129,7 +129,7 @@ fetch_conn(State) ->
 release_conn(State) ->
   case State#state.conn_pid =/= undefined of
     true -> 
-      maxwell_client_conn:stop(State#state.conn_pid),
+      catch maxwell_client_conn:stop(State#state.conn_pid),
       erlang:demonitor(State#state.conn_ref),
       State#state{conn_ref = undefined, conn_pid = undefined};
     false -> State
