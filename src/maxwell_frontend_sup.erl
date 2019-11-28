@@ -42,8 +42,8 @@ init([]) ->
     ?SPEC(maxwell_frontend_master_connector, worker),
     ?SPEC(maxwell_frontend_registrar, worker),
     ?SPEC(maxwell_frontend_handler_id_mgr, worker),
-    ?SPEC(maxwell_frontend_route_mgr_sup, supervisor),
     ?SPEC(maxwell_frontend_watcher_mgr_mgr, worker),
+    ?SPEC(maxwell_frontend_route_mgr_mgr, worker),
     ?SPEC(maxwell_frontend_route_syncer, worker)
   ],
   {ok, {SupFlags, ChildSpecs}}.

@@ -47,18 +47,14 @@
 %%% API
 %%%===================================================================
 start_link(Type) ->
-  gen_server:start_link(
-    ?VIA_PROCESS_NAME(Type), ?MODULE, [Type], []
-  ).
+  gen_server:start_link(?VIA_PROCESS_NAME(Type), ?MODULE, [Type], []).
 
 add(Type, WatcherPid) ->
   {ok, MgrPid} = maxwell_frontend_watcher_mgr_mgr:fetch_watcher_mgr(Type),
   gen_server:call(MgrPid, {add, WatcherPid}).
 
 remove(Type, WatcherPid) ->
-  case (catch gen_server:call(
-    ?VIA_PROCESS_NAME(Type), {remove, WatcherPid})
-  ) of
+  case (catch gen_server:call(?VIA_PROCESS_NAME(Type), {remove, WatcherPid})) of
     {'EXIT', {noproc, _}} -> ok;
     Result -> Result
   end.
@@ -87,10 +83,12 @@ handle_call({remove, Pid}, _From, State) ->
   reply(remove2(Pid, State));
 handle_call(next, _From, State) ->
   reply(next2(State));
-handle_call(_Request, _From, State) ->
+handle_call(Request, _From, State) ->
+  lager:error("Recevied unknown call: ~p", [Request]),
   reply({ok, State}).
 
-handle_cast(_Request, State) ->
+handle_cast(Request, State) ->
+  lager:error("Recevied unknown cast: ~p", [Request]),
   noreply(State).
 
 handle_info(?SHOULD_CLEAN_CMD, State) ->
@@ -101,7 +99,8 @@ handle_info({'DOWN', WatcherRef, process, _, Reason}, State) ->
     [State#state.type, WatcherRef, Reason]
   ),
   noreply(on_watcher_down(WatcherRef, State));
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+  lager:error("Recevied unknown info: ~p", [Info]),
   noreply(State).
 
 terminate(Reason, State) ->
@@ -201,8 +200,8 @@ remove_by_ref(WatcherRef, Watchers) ->
   Iter = gb_trees:iterator(Watchers),
   remove_by_ref(gb_trees:next(Iter), WatcherRef, Watchers).
 
-remove_by_ref({WatcherPid, WatcherRef0, Iter}, WatcherRef, Watchers) ->
-  case WatcherRef =:= WatcherRef0 of
+remove_by_ref({WatcherPid, WatcherRef2, Iter}, WatcherRef, Watchers) ->
+  case WatcherRef =:= WatcherRef2 of
     true -> gb_trees:delete(WatcherPid, Watchers);
     false -> remove_by_ref(gb_trees:next(Iter), WatcherRef, Watchers)
   end;

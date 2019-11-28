@@ -103,18 +103,12 @@ push(State) ->
   State.
 
 push_routes() ->
-  Req = #push_routes_req_t{
-    types = maxwell_frontend_watcher_mgr_mgr:get_types()
-  },
-  Rep = maxwell_frontend_master_connector:send(Req, 5000),
-  end_push_routes(Rep).
-
-end_push_routes(#push_routes_rep_t{}) ->
-  ignore;
-end_push_routes({error, {_, timeout}}) ->
-  ignore;
-end_push_routes(Error) ->
-  lager:error("Failed to push routes: ~p", [Error]).
+  Req = #push_routes_req_t{types = maxwell_frontend_watcher_mgr_mgr:get_types()},
+  case maxwell_frontend_master_connector:send(Req, 5000) of
+    #push_routes_rep_t{} -> ignore;
+    {error, {_, timeout}} -> ignore;
+    Error -> lager:error("Failed to push routes: ~p", [Error])
+  end.
 
 pull(State) ->
   case State#state.connected of
@@ -125,24 +119,26 @@ pull(State) ->
   State.
 
 pull_routes() ->
-  Req = #pull_routes_req_t{},
-  Rep = maxwell_frontend_master_connector:send(Req, 5000),
-  end_pull_routes(Rep).
+  case maxwell_frontend_master_connector:send(#pull_routes_req_t{}, 5000) of
+    #pull_routes_rep_t{route_groups = RouteGroups} -> sync_routes(RouteGroups);
+    {error, {_, timeout}} -> ignore;
+    Error -> lager:error("Failed to pull routes: ~p", [Error])
+  end.
 
-end_pull_routes(#pull_routes_rep_t{route_groups = RouteGroups}) ->
-  lists:foreach(
-    fun(RouteGroup) ->
-      maxwell_frontend_route_mgr:replace(
-        RouteGroup#route_group_t.type,
-        RouteGroup#route_group_t.endpoints
-      )
-    end,
-    RouteGroups
-  );
-end_pull_routes({error, {_, timeout}}) ->
-  ignore;
-end_pull_routes(Error) ->
-  lager:error("Failed to pull routes: ~p", [Error]).
+sync_routes(RouteGroups) ->
+  Types2 = lists:foldl(fun(RouteGroup, Types) ->
+      #route_group_t{type = Type, endpoints = Endpoints} = RouteGroup,
+      maxwell_frontend_route_mgr:replace(Type, Endpoints),
+      sets:add_element(Type, Types)
+    end, sets:new(), RouteGroups
+  ),
+  lists:foreach(fun(Type) -> 
+      case sets:is_element(Type, Types2) of
+        true -> ignore;
+        false -> maxwell_frontend_route_mgr:stop(Type)
+      end
+    end, maxwell_frontend_route_mgr_mgr:get_types()
+  ).
 
 send_cmd(Cmd, DelayMS) ->
   erlang:send_after(DelayMS, self(), Cmd).

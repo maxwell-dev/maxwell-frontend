@@ -14,7 +14,6 @@
 %% API
 -export([
   start_link/1,
-  ensure_started/1,
   add/2,
   remove/2,
   replace/2,
@@ -49,23 +48,10 @@
 %%% API
 %%%===================================================================
 start_link(Type) ->
-  gen_server:start_link(
-    ?VIA_PROCESS_NAME(Type), ?MODULE, [Type], []
-  ).
-
-ensure_started(Type) ->
-  case maxwell_server_registry:whereis_name(
-    ?PROCESS_NAME(Type)) of
-    undefined ->
-      case maxwell_frontend_route_mgr_sup:start_child(Type) of
-        {error, {already_started, Pid}} -> {ok, Pid};
-        {ok, _} = Result -> Result
-      end;
-    Pid -> {ok, Pid}
-  end.
+  gen_server:start_link(?VIA_PROCESS_NAME(Type), ?MODULE, [Type], []).
 
 add(Type, Endpoint) ->
-  {ok, Pid} = ensure_started(Type),
+  {ok, Pid} = maxwell_frontend_route_mgr_mgr:fetch_route_mgr(Type),
   gen_server:call(Pid, {add, Endpoint}).
 
 remove(Type, Endpoint) ->
@@ -75,7 +61,7 @@ remove(Type, Endpoint) ->
   end.
 
 replace(Type, Endpoints) ->
-  {ok, Pid} = ensure_started(Type),
+  {ok, Pid} = maxwell_frontend_route_mgr_mgr:fetch_route_mgr(Type),
   gen_server:call(Pid, {replace, Endpoints}).
 
 next(Type) ->

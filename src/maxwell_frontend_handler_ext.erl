@@ -68,17 +68,35 @@ handle(#do_req_t{type = Type} = Req, State) ->
         true -> try_send_to_route(Type, Req2, State);
         false ->
           lager:error("Failed to propagate: ~p", [Type]),
-          Error = build_error_rep(
+          Error = build_error2_rep(
             {error, failed_to_propagate, Type}, 
-            get_ref_from_trace(Req2)),
+            Req2#do_req_t.traces
+          ),
           reply(Error, State)
       end
   end;
 
-handle(#do_rep_t{} = Rep, State) ->
-  Rep2 = #do_rep_t{traces = [Trace | _]} = drop_trace(Rep, State),
+handle(#do_rep_t{traces = Traces} = Rep, State) ->
+  Traces2 = [Trace | _] = drop_trace(Traces, State),
   send_to_client(
-    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id), Rep2
+    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
+    Rep#do_rep_t{traces = Traces2}
+  ),
+  noreply(State);
+
+handle(#ok2_rep_t{traces = Traces} = Rep, State) ->
+  Traces2 = [Trace | _] = drop_trace(Traces, State),
+  send_to_client(
+    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
+    Rep#ok2_rep_t{traces = Traces2}
+  ),
+  noreply(State);
+
+handle(#error2_rep_t{traces = Traces} = Rep, State) ->
+  Traces2 = [Trace | _] = drop_trace(Traces, State),
+  send_to_client(
+    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
+    Rep#error2_rep_t{traces = Traces2}
   ),
   noreply(State);
 
@@ -173,8 +191,10 @@ try_send_to_route(Type, Req, State) ->
       noreply(State2);
     false ->
       lager:error("Failed to find available watcher or route: type: ~p", [Type]),
+      [#trace_t{ref = Ref} | _] = Req#do_req_t.traces,
       Error = build_error_rep(
-        {error, failed_to_find_watcher_or_route, Type}, get_ref_from_trace(Req)),
+        {error, failed_to_find_watcher_or_route, Type}, Ref
+      ),
       reply(Error, State)
   end.
 
@@ -214,22 +234,23 @@ build_source(InitialReq) ->
     endpoint = io_lib:format("~p", [maps:get(endpoint, InitialReq)])
   }.
 
-add_trace(#do_req_t{traces = Traces} = Req, State) ->
+add_trace(#do_req_t{traces = Traces} = Req, State) -> 
   Req#do_req_t{traces = [#trace_t{node_id = State#state.node_id} | Traces]}.
 
-drop_trace(#do_rep_t{traces = [Trace | RestTraces]} = Rep, State) ->
-  #trace_t{node_id = NodeId} = Trace,
+drop_trace([#trace_t{node_id = NodeId} | RestTraces] = Traces, State) ->
   case NodeId =:= State#state.node_id of
-    true -> Rep#do_rep_t{traces = RestTraces};
-    false -> Rep
+    true -> RestTraces;
+    false -> Traces
   end.
-
-get_ref_from_trace(#do_req_t{traces = [#trace_t{ref = Ref} | _]}) ->
-  Ref.
 
 build_error_rep(Error, Ref) ->
   #error_rep_t{
     code = 1, desc = io_lib:format("~p", [Error]), ref = Ref
+  }.
+
+build_error2_rep(Error, Traces) ->
+  #error2_rep_t{
+    code = 1, desc = io_lib:format("~p", [Error]), traces = Traces
   }.
 
 reply(Reply, State) ->
