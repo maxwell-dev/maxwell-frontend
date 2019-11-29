@@ -11,7 +11,7 @@
   0},
  {<<"maxwell_client">>,
   {git,"https://github.com/maxwell-dev/maxwell-client-erlang.git",
-       {ref,"01f0d7d0317ea6621dd3f797ea966b04265a0588"}},
+       {ref,"c4d86db926868ca3dfe63e0738f0833ed79a3afd"}},
   0},
  {<<"maxwell_ip_resolver">>,
   {git,"https://github.com/maxwell-dev/maxwell-ip-resolver.git",
