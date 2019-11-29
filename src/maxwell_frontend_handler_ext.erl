@@ -49,7 +49,7 @@ handle(#pull_req_t{topic = Topic, ref = Ref} = Req, State) ->
       send_to_backend(ConnPid, set_puller(Req, State2)),
       noreply(State2);
     Error ->
-      lager:error("Failed to find available backend: topic: ~p", [Topic]),
+      lager:error("Failed to find backend: topic: ~p", [Topic]),
       reply(build_error_rep(Error, Ref), State)
   end;
 
@@ -104,7 +104,9 @@ handle({'DOWN', ConnRef, process, _ConnPid, _Reason}, State) ->
   noreply(release_conn(ConnRef, State));
 
 handle(Msg, State) ->
-  lager:error("Received unknown msg: ~p", [Msg]),
+  lager:error(
+    "Received unknown msg: ~p, initial_req: ~p", [Msg, State#state.initial_req]
+  ),
   noreply(State).
 
 terminate(Reason, State) ->
@@ -190,7 +192,7 @@ try_send_to_route(Type, Req, State) ->
       send_to_route(ConnPid, add_trace(Req, State2)),
       noreply(State2);
     false ->
-      lager:error("Failed to find available watcher or route: type: ~p", [Type]),
+      lager:error("Failed to find watcher or route: type: ~p", [Type]),
       [#trace_t{ref = Ref} | _] = Req#do_req_t.traces,
       Error = build_error_rep(
         {error, failed_to_find_watcher_or_route, Type}, Ref
@@ -222,8 +224,7 @@ set_source(#do_req_t{
     true -> Req;
     false ->
       case SourceEnabled of
-        true -> 
-          Req#do_req_t{source = build_source(State#state.initial_req)};
+        true -> Req#do_req_t{source = build_source(State#state.initial_req)};
         false -> Req
       end
   end.
