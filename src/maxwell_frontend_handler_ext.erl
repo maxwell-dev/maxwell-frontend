@@ -100,6 +100,9 @@ handle(#error2_rep_t{traces = Traces} = Rep, State) ->
   ),
   noreply(State);
 
+handle({error, Reason, Ref}, State) ->
+  reply(build_error_rep(Reason, Ref), State);
+
 handle({'DOWN', ConnRef, process, _ConnPid, _Reason}, State) ->
   noreply(release_conn(ConnRef, State));
 
@@ -179,7 +182,8 @@ send_to_backend(ConnPid, #pull_req_t{ref = Ref} = Req) ->
     fun(Rep)->
       case Rep of
         #pull_rep_t{} -> Rep#pull_rep_t{ref = Ref};
-        _ -> Rep
+        {error, Reason, _} -> {error, Reason, Ref};
+        {error, Reason} -> {error, Reason, Ref}
       end
     end
   ).
@@ -207,7 +211,19 @@ send_to_watcher(WatcherPid, Req) ->
   maxwell_server_handler:send(WatcherPid, Req).
 
 send_to_route(ConnPid, Req) ->
-  maxwell_client_conn:async_send(ConnPid, Req, 5000).
+  #trace_t{ref = Ref} = lists:nth(2, Req#do_req_t.traces),
+  maxwell_client_conn:async_send(
+    ConnPid,
+    Req,
+    5000,
+    fun(Rep)->
+      case Rep of
+        {error, Reason, _} -> {error, Reason, Ref};
+        {error, Reason} -> {error, Reason, Ref};
+        Rep -> Rep
+      end
+    end
+  ).
 
 set_puller(Req, State) ->
   Req#pull_req_t{puller = State#state.handler_id}.
