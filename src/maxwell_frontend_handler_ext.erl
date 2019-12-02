@@ -56,25 +56,30 @@ handle(#pull_req_t{topic = Topic, ref = Ref} = Req, State) ->
 handle(#pull_rep_t{} = PullRep, State) ->
   reply(PullRep, State);
 
-handle(#do_req_t{type = Type} = Req, State) ->
+handle(#do_req_t{} = Req, State) ->
   Req2 = set_source(set_handler_id(Req, State), State),
-  WatcherPid = maxwell_frontend_watcher_mgr:next(Type),
-  case WatcherPid =/= undefined of
-    true -> 
-      send_to_watcher(WatcherPid, Req2),
-      noreply(State);
-    false ->
-      case erlang:length(Req2#do_req_t.traces) < 2 of
-        true -> try_send_to_route(Type, Req2, State);
-        false ->
-          lager:error("Failed to propagate: ~p", [Type]),
-          Error = build_error2_rep(
-            {error, failed_to_propagate, Type}, 
-            Req2#do_req_t.traces
-          ),
-          reply(Error, State)
+  handle({retry, Req2, ok, 0}, State);
+handle({retry, #do_req_t{type = Type} = Req, _, Count}, State)
+when Count < 3 ->
+  case try_send_to_watcher(Type, Req) of
+    ok -> noreply(State);
+    {error, failed_to_find_watcher} ->
+      case try_send_to_route(Type, Req, State) of
+        {ok , State2} -> noreply(State2);
+        {error, Reason} ->
+          Delay = (Count + 1) * 500,
+          Cmd = {retry, Req, Reason, Count + 1},
+          lager:debug("Will retry: cmd: ~p, delay: ~p", [Cmd, Delay]),
+          erlang:send_after(Delay, self(), Cmd),
+          noreply(State)
       end
   end;
+handle({retry, #do_req_t{type = Type} = Req, Reason, 3}, State) ->
+  lager:error("Failed to find watcher: reason: ~p, type: ~p", [Reason, Type]),
+  Error = build_error2_rep(
+    {error, {failed_to_find_watcher, Reason, Type}}, Req#do_req_t.traces
+  ),
+  reply(Error, State);
 
 handle(#do_rep_t{traces = Traces} = Rep, State) ->
   Traces2 = [Trace | _] = drop_trace(Traces, State),
@@ -175,7 +180,7 @@ unregister_endpoint(ConnRef, State) ->
   end.
 
 send_to_backend(ConnPid, #pull_req_t{ref = Ref} = Req) ->
-  maxwell_client_conn:async_send(
+  catch maxwell_client_conn:async_send(
     ConnPid, 
     Req, 
     5000, 
@@ -188,20 +193,27 @@ send_to_backend(ConnPid, #pull_req_t{ref = Ref} = Req) ->
     end
   ).
 
-try_send_to_route(Type, Req, State) ->
-  Endpoint = maxwell_frontend_route_mgr:next(Type),
-  case Endpoint =/= undefined of
+try_send_to_watcher(Type, Req) ->
+  WatcherPid = maxwell_frontend_watcher_mgr:next(Type),
+  case WatcherPid =/= undefined of
     true ->
-      {ok, ConnPid, State2} = fetch_conn(Endpoint, State),
-      send_to_route(ConnPid, add_trace(Req, State2)),
-      noreply(State2);
-    false ->
-      lager:error("Failed to find watcher or route: type: ~p", [Type]),
-      [#trace_t{ref = Ref} | _] = Req#do_req_t.traces,
-      Error = build_error_rep(
-        {error, failed_to_find_watcher_or_route, Type}, Ref
-      ),
-      reply(Error, State)
+      send_to_watcher(WatcherPid, Req),
+      ok;
+    false -> {error, failed_to_find_watcher}
+    end.
+
+try_send_to_route(Type, Req, State) ->
+  case erlang:length(Req#do_req_t.traces) < 2 of
+    true ->
+      Endpoint = maxwell_frontend_route_mgr:next(Type),
+      case Endpoint =/= undefined of
+        true ->
+          {ok, ConnPid, State2} = fetch_conn(Endpoint, State),
+          send_to_route(ConnPid, add_trace(Req, State2)),
+          {ok, State2};
+        false -> {error, failed_to_find_route}
+      end;
+    false -> {error, prevent_more_routes}
   end.
 
 send_to_client(HandlerPid, Rep) -> 
@@ -212,7 +224,7 @@ send_to_watcher(WatcherPid, Req) ->
 
 send_to_route(ConnPid, Req) ->
   #trace_t{ref = Ref} = lists:nth(2, Req#do_req_t.traces),
-  maxwell_client_conn:async_send(
+  catch maxwell_client_conn:async_send(
     ConnPid,
     Req,
     5000,
