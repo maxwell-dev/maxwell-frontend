@@ -23,7 +23,7 @@
   0},
  {<<"maxwell_server">>,
   {git,"https://github.com/maxwell-dev/maxwell-server.git",
-       {ref,"8910446b51934bb336175906bfc500ff09de0a96"}},
+       {ref,"db5e9db8e00329e1cfa663eed0018037b2877a6e"}},
   0},
  {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},2}]}.
 [
