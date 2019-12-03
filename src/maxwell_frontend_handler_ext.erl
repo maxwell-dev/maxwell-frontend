@@ -83,26 +83,17 @@ handle({retry, #do_req_t{type = Type} = Req, Reason, 3}, State) ->
 
 handle(#do_rep_t{traces = Traces} = Rep, State) ->
   Traces2 = [Trace | _] = drop_trace(Traces, State),
-  send_to_client(
-    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
-    Rep#do_rep_t{traces = Traces2}
-  ),
+  try_send_to_client(Trace#trace_t.handler_id, Rep#do_rep_t{traces = Traces2}),
   noreply(State);
 
 handle(#ok2_rep_t{traces = Traces} = Rep, State) ->
   Traces2 = [Trace | _] = drop_trace(Traces, State),
-  send_to_client(
-    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
-    Rep#ok2_rep_t{traces = Traces2}
-  ),
+  try_send_to_client(Trace#trace_t.handler_id, Rep#ok2_rep_t{traces = Traces2}),
   noreply(State);
 
 handle(#error2_rep_t{traces = Traces} = Rep, State) ->
   Traces2 = [Trace | _] = drop_trace(Traces, State),
-  send_to_client(
-    maxwell_frontend_handler_id_mgr:get_pid(Trace#trace_t.handler_id),
-    Rep#error2_rep_t{traces = Traces2}
-  ),
+  try_send_to_client(Trace#trace_t.handler_id, Rep#error2_rep_t{traces = Traces2}),
   noreply(State);
 
 handle({error, Reason, Ref}, State) ->
@@ -180,10 +171,10 @@ unregister_endpoint(ConnRef, State) ->
   end.
 
 send_to_backend(ConnPid, #pull_req_t{ref = Ref} = Req) ->
-  catch maxwell_client_conn:async_send(
+  R = (catch maxwell_client_conn:async_send(
     ConnPid, 
     Req, 
-    5000, 
+    10000,
     fun(Rep)->
       case Rep of
         #pull_rep_t{} -> Rep#pull_rep_t{ref = Ref};
@@ -191,7 +182,25 @@ send_to_backend(ConnPid, #pull_req_t{ref = Ref} = Req) ->
         {error, Reason} -> {error, Reason, Ref}
       end
     end
-  ).
+  )),
+  case R =:= ok of
+    true -> ok;
+    false ->
+      lager:info(
+        "Conn was not available: error: ~p, conn_pid: ~p, req: ~p",
+        [R, ConnPid, Req]
+      ),
+      ignore
+  end.
+
+try_send_to_client(HandlerId, Rep) ->
+  HandlerPid = maxwell_frontend_handler_id_mgr:get_pid(HandlerId),
+  case HandlerPid =/= undefined of
+    true -> send_to_client(HandlerPid, Rep);
+    false ->
+      lager:info("Handler was down: handler_id: ~p", HandlerId),
+      ignore
+  end.
 
 try_send_to_watcher(Type, Req) ->
   WatcherPid = maxwell_frontend_watcher_mgr:next(Type),
@@ -216,7 +225,7 @@ try_send_to_route(Type, Req, State) ->
     false -> {error, prevent_more_routes}
   end.
 
-send_to_client(HandlerPid, Rep) -> 
+send_to_client(HandlerPid, Rep) ->
   maxwell_server_handler:send(HandlerPid, Rep).
 
 send_to_watcher(WatcherPid, Req) ->
@@ -224,7 +233,7 @@ send_to_watcher(WatcherPid, Req) ->
 
 send_to_route(ConnPid, Req) ->
   #trace_t{ref = Ref} = lists:nth(2, Req#do_req_t.traces),
-  catch maxwell_client_conn:async_send(
+  R = (catch maxwell_client_conn:async_send(
     ConnPid,
     Req,
     5000,
@@ -235,7 +244,16 @@ send_to_route(ConnPid, Req) ->
         Rep -> Rep
       end
     end
-  ).
+  )),
+  case R =:= ok of
+    true -> ok;
+    false ->
+      lager:info(
+        "Conn was not available: error: ~p, conn_pid: ~p, req: ~p",
+        [R, ConnPid, Req]
+      ),
+      ignore
+  end.
 
 set_puller(Req, State) ->
   Req#pull_req_t{puller = State#state.handler_id}.
