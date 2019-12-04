@@ -198,7 +198,7 @@ try_send_to_client(HandlerId, Rep) ->
   case HandlerPid =/= undefined of
     true -> send_to_client(HandlerPid, Rep);
     false ->
-      lager:info("Handler was down: handler_id: ~p", HandlerId),
+      lager:info("Handler was down: handler_id: ~p", [HandlerId]),
       ignore
   end.
 
